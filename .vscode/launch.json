@@ -1,0 +1,49 @@
+{
+    // 使用 IntelliSense 了解相关属性。 
+    // 悬停以查看现有属性的描述。
+    // 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
+    // 其实使用 cmake 将程序编译出来后，只需要launch.json就可以实现调试，并不需要settings.json让vscode重新编译
+    // 可以直接理解为让launch.json文件直接帮我们启动gdb
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug CMake Executable",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/", // 配置需要调试的可执行文件路径 workspaceFolder是当前vscode打开的文件夹
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "stopAtEntry": false,
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "miDebuggerPath": "/usr/bin/gdb"
+        },
+        // "console" 三种取值对比
+        // "integratedTerminal" ➜ VS Code 下方“终端”面板（最常用，支持输入/输出，路径自动继承当前 shell 环境）。
+        // "externalTerminal" ➜ 额外弹出一个 系统独立终端窗口（Linux 下是 gnome-terminal / xterm，Windows 下是 conhost）。适合需要 curses、颜色、交互式 TUI 的程序。
+        // "internalConsole" ➜ VS Code 的“调试控制台”，只能看输出，不能键盘输入，一般只在纯日志场景用。
+        // "justMyCode" 开关效果
+        // true（默认）
+        // 调试器把 非你项目目录 下的文件视为“外部代码”，即使打了断点也会直接跳过，不会停。
+        // 好处：不会跳进 numpy、pandas 等深层调用栈，调试更快。
+        // false
+        // 所有断点都生效，可一路 F11 跳进第三方库或标准库源码。
+        // 需要调试 site-packages 里的库时，必须设成 false。
+        // 一句话记忆
+        // "console" 决定 输出/输入在哪个窗口；
+        // "justMyCode" 决定 断点能否停在第三方库。
+        {
+            "name": "Python: Debug python file",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "args": [
+                "-d",
+                "-c",
+                "-l",
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": true
+        }
+    ]
+}
