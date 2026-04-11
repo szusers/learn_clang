@@ -157,7 +157,9 @@ int gettok() {
 }
 
 int CurTok;
-int getNextToken() { return gettok(); }
+// fix:
+// 调用gettok的时候更新当前指向的token并保存（原本并没有给CurTok赋值这一步）
+int getNextToken() { return CurTok = gettok(); }
 
 /////////////////////////////////////
 /* Basic Expression Parsing */
@@ -190,4 +192,65 @@ static std::unique_ptr<ExprAST> ParseParenExpr() {
                   // 调用之后就直接快进到下一个字符了，也就是 ）后面的表达式了。
   return V;
 }
+
+/// identifierexpr
+///   ::= identifier
+///   ::= identifier '(' expression* ')'
+/// 处理变量引用以及函数调用。如果一个标识符后面紧跟着的不是
+/// ( , 那么就表示它是单个的标识符，也就是变量而不是一个函数
+std::unique_ptr<ExprAST> ParseIdentifierExpr() {
+  std::string IdName = IdentifierStr;
+
+  getNextToken(); // eat identifier.
+
+  if (CurTok != '(') // Simple variable ref. (一个简单的变量引用（别名）)
+    return std::make_unique<VariableExprAST>(IdName);
+
+  // Call.
+  getNextToken(); // eat (
+  std::vector<std::unique_ptr<ExprAST>> Args;
+  if (CurTok != ')') {
+    while (true) {
+      if (auto Arg = ParseExpression()) // 分别解析每个函数参数以及表达式主体
+        // 存储参数。在这里push_back和emplace_back在效率上没有区别
+        Args.push_back(std::move(Arg));
+      else
+        return nullptr;
+
+      if (CurTok == ')') // 有闭环 ) 则正常退出
+        break;
+
+      if (CurTok != ',') // 缺少 , 分隔参数说明参数列表的写法有误
+        return LogError("Expected ')' or ',' in argument list");
+      getNextToken();
+    }
+  }
+
+  // Eat the ')'.
+  getNextToken();
+  // 这条分支返回的是解析出来的函数对象
+  return std::make_unique<CallExprAST>(IdName, std::move(Args));
+}
+
+/// primary
+/// 现在我们已经实现了所有简单的表达式解析逻辑，可以定义一个辅助函数，将它们封装成一个入口点。我们将这类表达式称为“主要”表达式，原因将在后续教程中详细说明。为了解析任意主要表达式，我们需要确定它的表达式类型：
+///   ::= identifierexpr
+///   ::= numberexpr
+///   ::= parenexpr  初始入口的解析定义：1、标识符表达式
+///   2、数字表达式（常数）3、括号表达式（函数）
+decltype(auto) ParsePrimary() {
+  // 使用decltype(auto)和auto表示返回值类型的区别在于：auto按值进行类型推导，会丢弃引用以及const将函数作为副本返回。但是decltype(auto)完全按照表达式原样进行推导
+  switch (CurTok) {
+  default:
+    return LogError("unknown token when expecting an expression");
+  case TOK_IDENTIFIER:
+    return ParseIdentifierExpr();
+  case TOK_NUMBER:
+    return ParseNumberExpr();
+  case '(': // 括号后面跟着的就是表达式的主体内容，所以只要当前的token是 (
+            // 那就进入括号表达式解析的入口
+    return ParseParenExpr();
+  }
+}
+
 } // namespace
