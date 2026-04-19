@@ -26,6 +26,7 @@ atan2(sin(.4), cos(42))
 
 #include "Parser_AST_class.hpp"
 #include <cctype>
+#include <map>
 #include <string>
 
 /// LogError* - These are little helper functions for error handling.
@@ -165,6 +166,8 @@ int getNextToken() { return CurTok = gettok(); }
 /* Basic Expression Parsing */
 ////////////////////////////////////
 
+std::unique_ptr<ExprAST> ParseExpression(); // 后面定义这个函数
+
 /// numberexpr ::= number  这个程序非常简单：当当前令牌是 tok_number 令牌时，
 /// 它期望被调用。它取当前的数字值全局变量NumVal，创建一个 NumberExprAST
 /// 节点，将词法表推进到下一个令牌，最后返回。
@@ -187,9 +190,12 @@ static std::unique_ptr<ExprAST> ParseParenExpr() {
 
   if (CurTok != ')')
     return LogError("expected ')'");
-  getNextToken(); // eat ). 调用这个函数之前LastChar是 ) ,
-                  // 也就是此时这个函数返回值是 ),
-                  // 调用之后就直接快进到下一个字符了，也就是 ）后面的表达式了。
+
+  getNextToken(); // eat ). 调用这个函数之前Curtok是 ) ,
+                  // 也就是此时这个函数返回值是 )
+                  // (这种情况同时也是返回的LastChar),
+                  // 调用之后就直接快进到下一个token了，也就是）后面的表达式了。
+  // 直接返回括号里面的表达式，例如 (4+5)中的 4+5
   return V;
 }
 
@@ -197,21 +203,26 @@ static std::unique_ptr<ExprAST> ParseParenExpr() {
 ///   ::= identifier
 ///   ::= identifier '(' expression* ')'
 /// 处理变量引用以及函数调用。如果一个标识符后面紧跟着的不是
-/// ( , 那么就表示它是单个的标识符，也就是变量而不是一个函数
+/// ( , 那么就表示它是单个的标识符，也就是变量而不是一个函数。
+// 这个函数和上面不同的是它不是要处理括号里面的表达式，它是一个分支判断到底是变量还是一个函数调用。是函数调用的话就要同时处理括号外的函数名和括号内的函数参数
 std::unique_ptr<ExprAST> ParseIdentifierExpr() {
   std::string IdName = IdentifierStr;
 
   getNextToken(); // eat identifier.
+                  // 保存标识符之后让此时的token指向标识符后面的下一项
 
   if (CurTok != '(') // Simple variable ref. (一个简单的变量引用（别名）)
     return std::make_unique<VariableExprAST>(IdName);
 
   // Call.
   getNextToken(); // eat (
+                  // 。gettok这个函数里面本身就没有处理括号的逻辑。因此碰到括号直接跳过它去处理括号里面的表达式
   std::vector<std::unique_ptr<ExprAST>> Args;
   if (CurTok != ')') {
     while (true) {
       if (auto Arg = ParseExpression()) // 分别解析每个函数参数以及表达式主体
+        // 如果这个函数有多个参数需要解析的话，需要在这里循环多次调用ParseExpression，具体顺序为：Identifier->Expr->Primary->Expr->Primary...
+        // 直到遇到 ）。这就是一次循环解析一个函数参数的调用开销
         // 存储参数。在这里push_back和emplace_back在效率上没有区别
         Args.push_back(std::move(Arg));
       else
@@ -222,13 +233,14 @@ std::unique_ptr<ExprAST> ParseIdentifierExpr() {
 
       if (CurTok != ',') // 缺少 , 分隔参数说明参数列表的写法有误
         return LogError("Expected ')' or ',' in argument list");
+
       getNextToken();
     }
   }
 
   // Eat the ')'.
   getNextToken();
-  // 这条分支返回的是解析出来的函数对象
+  // 这条分支返回的是解析出来的函数对象。
   return std::make_unique<CallExprAST>(IdName, std::move(Args));
 }
 
@@ -244,12 +256,89 @@ decltype(auto) ParsePrimary() {
   default:
     return LogError("unknown token when expecting an expression");
   case TOK_IDENTIFIER:
+    // 变量名和函数的解析走这条分支
     return ParseIdentifierExpr();
   case TOK_NUMBER:
     return ParseNumberExpr();
   case '(': // 括号后面跟着的就是表达式的主体内容，所以只要当前的token是 (
-            // 那就进入括号表达式解析的入口
+            // 那就进入括号表达式解析的入口。括号表达式走这条分支
     return ParseParenExpr();
+  }
+}
+
+/// BinopPrecedence - This holds the precedence for each binary operator that is
+/// defined.  保存运算符优先级的map
+std::map<char, int> BinopPrecedence;
+
+/// GetTokPrecedence - Get the precedence of the pending binary operator token.
+
+int GetTokPrecedence() {
+  if (!isascii(CurTok))
+    return -1;
+
+  // Make sure it's a declared binop.
+  int TokPrec = BinopPrecedence[CurTok];
+  if (TokPrec <= 0)
+    return -1;
+  return TokPrec;
+}
+
+std::unique_ptr<ExprAST> ParseBinOpRHS(int ExprPrec,
+                                       std::unique_ptr<ExprAST> LHS);
+
+/// expression ::= primary binoprhs
+/// 首先，表达式是一个主表达式，后面可能跟着一系列 [binop,primaryexpr] 对：
+/// 解析器把表达式当成“primary + 运算符”的流，通过比较优先级逐步组合成
+/// AST，而括号已经在 primary 阶段被处理掉了.
+/// 解析运算符表达式的原理是：把复杂的表达式看成一串primmary（基本表达式）+运算符
+std::unique_ptr<ExprAST> ParseExpression() {
+  auto LHS = ParsePrimary();
+  if (!LHS) {
+    return nullptr;
+  }
+  return ParseBinOpRHS(0, std::move(LHS));
+}
+
+std::unique_ptr<ExprAST> ParseBinOpRHS(int ExprPrec,
+                                       std::unique_ptr<ExprAST> LHS) {
+  /*
+    这个函数在获取token优先级时总是能确保当前的Curtok落在二元运算的原因在于：算法本质是流式消费token，CurTok始终指向下一个要处理的token
+    并且在ParsePrimary函数所支持的所有处理分支中，各个函数在解析完当前的token之后都有使用getNextToken将CurTok指向下一个待处理的token
+    因此我们可以认为，每当处理完一个表达式/数字/标识符之后CurTok总是指向下一个要处理的token，而这个token如果是一个二元运算符的话就会进入ParseBinOpRHS函数进行优先级比较和合并，否则就直接返回LHS（例如处理的是函数参数这里就直接返回LHS）。
+    */
+  while (true) {
+    // 1️⃣ 获取当前 token 的优先级
+    int TokPrec = GetTokPrecedence();
+
+    // 2️⃣ 如果当前不是合法的二元运算符，或优先级不够 →
+    // 结束（这种情况直接返回LHS）。解析函数参数的时候也是在这里直接返回LHS（函数参数标识符/变量）
+    // 这个if决定这一层LHS是否还要继续合并右边的RHS，是否还要继续干活吃token
+    if (TokPrec < ExprPrec)
+      return LHS;
+
+    // 3️⃣ 记录当前运算符
+    int BinOp = CurTok;
+    getNextToken(); // 吃掉运算符
+
+    // 4️⃣解析右侧primary（先走入口，判断当前的Curtok应该是按照标识符还是数字还是括号表达式解析）
+    auto RHS = ParsePrimary();
+    if (!RHS)
+      return nullptr;
+
+    // 5️⃣ 看看 RHS 后面还有没有更高优先级的运算符
+    int NextPrec = GetTokPrecedence();
+
+    if (TokPrec < NextPrec) {
+      // 这个if决定RHS是否还要继续扩展，扩展RHS是下一层要做的事情，并不在这一层解决。也就是说这里决定是否还有下一层
+      // 递归：把 RHS 扩展成更完整的表达式（也就是看右边是否还有右边）
+      RHS = ParseBinOpRHS(TokPrec + 1, std::move(RHS));
+      if (!RHS)
+        return nullptr;
+    }
+
+    // 6️⃣ 合并 LHS 和 RHS
+    LHS =
+        std::make_unique<BinaryExprAST>(BinOp, std::move(LHS), std::move(RHS));
   }
 }
 
