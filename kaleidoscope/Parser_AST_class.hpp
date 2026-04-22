@@ -100,7 +100,7 @@ public:
 };
 
 /// CallExprAST - Expression class for function calls.
-/// 保存函数名和函数参数的类
+/// 保存函数名和函数参数的类（在函数调用处解析函数调用）
 class CallExprAST : public ExprAST {
   std::string Callee_;
   std::vector<std::unique_ptr<ExprAST>> Args_;
@@ -114,7 +114,7 @@ public:
 /// PrototypeAST - This class represents the "prototype" for a function,
 /// which captures its name, and its argument names (thus implicitly the number
 /// of arguments the function takes).
-/// 只保存函数的名字和参数的名字列表的类
+/// 只保存函数的名字和参数的名字列表的类（解析函数声明）
 class PrototypeAST {
   std::string Name_;
   std::vector<std::string> Args_;

@@ -292,6 +292,7 @@ std::unique_ptr<ExprAST> ParseBinOpRHS(int ExprPrec,
 /// AST，而括号已经在 primary 阶段被处理掉了.
 /// 解析运算符表达式的原理是：把复杂的表达式看成一串primmary（基本表达式）+运算符
 std::unique_ptr<ExprAST> ParseExpression() {
+  // 解析表达式的时候从解析入口开始解析（因为我们需要判断当前的token类型是什么，然后我们才能对症下药去解析对应的表达式）
   auto LHS = ParsePrimary();
   if (!LHS) {
     return nullptr;
@@ -342,4 +343,97 @@ std::unique_ptr<ExprAST> ParseBinOpRHS(int ExprPrec,
   }
 }
 
+/*
+至此，表达式的处理就完成了。现在，我们可以让解析器指向任意的词法单元流，并从中构建表达式，直到遇到第一个不属于该表达式的词法单元为止。接下来，我们需要处理函数定义等等。
+*/
+
+////////////////////////////////////////////////////////////////
+// Parsing the Rest 解析剩余部分
+///////////////////////////////////////////////////////////////
+
+/// prototype
+///   ::= id '(' id* ')'  定义这种形式为函数声明
+std::unique_ptr<PrototypeAST> ParsePrototype() {
+  if (CurTok != TOK_IDENTIFIER) {
+    // 解析函数没有标识符（函数名）抛出错误
+    return LogErrorP("Expected function name in prototype");
+  }
+
+  std::string FnName = IdentifierStr;
+  getNextToken(); // eat function name.
+                  // 解析完函数名之后让CurTok指向函数名后面的token
+  if (CurTok != '(') {
+    return LogErrorP("Expected '(' in prototype");
+  }
+  // Read the List of Argument Names.
+  std::vector<std::string> ArgNames;
+  while (getNextToken() == TOK_IDENTIFIER) {
+    ArgNames.push_back(IdentifierStr);
+    // 如果函数的声明写法上不是用空格分隔，而是使用,进行分隔的话，需要解注释下面这个getNextToken()，让CurTok跳过,
+    // getNextToken(); // eat ,
+  }
+  if (CurTok != ')') {
+    // 如果退出不是因为碰到
+    // ）而是因为碰到其他token，那么说明函数声明的参数列表写法有误
+    return LogErrorP("Expected ')' in prototype");
+  }
+
+  // success. 解析成功，返回一个函数声明对象
+  getNextToken();
+
+  return std::make_unique<PrototypeAST>(FnName, std::move(ArgNames));
+}
+
+// 鉴于此，函数定义非常简单，只需一个函数原型加上一个用于实现函数体的表达式即可：
+/// definition ::= 'def' prototype expression   例如：def foo(x, y) x + y
+std::unique_ptr<FunctionAST> ParseDefinition() {
+  getNextToken(); // eat def.
+  // 先解析函数名以及函数参数
+  auto Proto = ParsePrototype();
+  if (!Proto)
+    return nullptr;
+
+  // 后解析函数主体的表达式
+  if (auto E = ParseExpression())
+    return std::make_unique<FunctionAST>(std::move(Proto), std::move(E));
+  return nullptr;
+}
+
+// 此外，我们支持使用“extern”声明诸如“sin”和“cos”之类的函数，也支持用户函数的前置声明。这些“extern”只是函数原型，没有函数体：
+/// external ::= 'extern' prototype
+/// 支持解析带有extern关键字的函数声明，例如：extern sin(arg);
+std::unique_ptr<PrototypeAST> ParseExtern() {
+  getNextToken(); // eat extern.
+  return ParsePrototype();
+}
+
+// 最后，我们还将允许用户输入任意顶级表达式并即时求值。我们将通过定义匿名零元（无参数）函数来实现这一点：
+/// toplevelexpr ::= expression
+/// 这个函数的作用是让表达式变成可执行单位（函数），从而让表达式可以立刻执行，而不是生成AST上的一个ExprAST(表达式结点)
+/*
+顶级表达式做的事情是：
+
+把用户输入的：
+
+1 + 2 * 3
+
+变成内部等价的：
+
+def __anon_expr() 1 + 2 * 3
+
+也就是：
+
+一个匿名函数
+没有参数
+函数体就是这个表达式
+*/
+std::unique_ptr<FunctionAST> ParseTopLevelExpr() {
+  if (auto E = ParseExpression()) {
+    // Make an anonymous proto.
+    auto Proto = std::make_unique<PrototypeAST>("__anon_expr",
+                                                std::vector<std::string>());
+    return std::make_unique<FunctionAST>(std::move(Proto), std::move(E));
+  }
+  return nullptr;
+}
 } // namespace
