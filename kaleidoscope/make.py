@@ -10,7 +10,7 @@ clang_cxx_flag = ""
 linker_flag = ""
 cxx_compiler = ""
 
-os.chdir("src")
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 
 if len(sys.argv) > 1:
@@ -42,9 +42,9 @@ if len(sys.argv) > 1:
         subprocess.run("rm -rf build", shell=True, check=True)
 
     if "-l" in args or "--llvm" in args:
-        clang_cc_flag = "CC=clang-20"
-        clang_cxx_flag = "CXX=clang++-20"
-        linker_flag = "-DCMAKE_EXE_LINKER_FLAGS='-fuse-ld=lld'"
+        # clang_cc_flag = "CC=clang-20"
+        # clang_cxx_flag = "CXX=clang++-20"
+        # linker_flag = "-DCMAKE_EXE_LINKER_FLAGS='-fuse-ld=lld'"
         cxx_compiler = "-DUSE_LLVM=ON"
     os.makedirs("build", exist_ok=True)
     os.chdir("build")

@@ -86,7 +86,8 @@ int gettok() {
 
   注意：空字符 '\0' (ASCII 0) 不是空白字符。
 
-  当前字符为空白字符时，该函数返回true
+  如果上一次解析最后读取到的字符为空白字符时（或者一开始初始化的值时候为空时），该函数(isspace)返回true.
+  所以为空格的时候会一直刷新LastChar直到第一个非空字符
   */
   while (isspace(static_cast<unsigned char>(LastChar)))
     LastChar = getchar();
@@ -94,6 +95,7 @@ int gettok() {
   // 识别标识符（变量名/函数名）和关键字（def/extern）
   // 并且标识符的第一位必须是字母而不能是数字！！！
   if (isalpha(static_cast<unsigned char>(LastChar))) {
+    // 判断成功后先将全局变量做一次更新
     IdentifierStr = LastChar;
     while (isalnum(static_cast<unsigned char>(LastChar = getchar()))) {
       // 若为数字或者字母则持续拼接标识符
@@ -125,12 +127,19 @@ int gettok() {
       fprintf(stderr, "Error: invalid number format: %s\n", NumStr.c_str());
       return TOK_EOF; // 或者返回一个表示错误的 token
     }
-    if (dot_count == 1 && !isdigit(static_cast<unsigned char>(LastChar))) {
-      fprintf(stderr, "Error: invalid number format with single dot: %s\n",
-              NumStr.c_str());
-      return TOK_EOF; // 或者返回一个表示错误的 token
+
+    // 2. 检查是否只有一个孤立的小数点 "."
+    // 如果你的语言中 "." 是操作符，这里应该返回对应的字符
+    if (NumStr == ".") {
+      // 如果想让 "." 作为操作符：
+      // return '.';
+      // 如果想报错：
+      fprintf(stderr, "Error: isolated dot is not a valid number\n");
+      return TOK_EOF;
     }
+
     // 第二个参数传入0表示忽略这个函数产生的报错
+    // 这里如果是满足条件的数字直接更新全局变量NumVal，并且返回数字token
     NumVal = strtod(NumStr.c_str(), nullptr);
     return TOK_NUMBER;
   }
@@ -436,4 +445,84 @@ std::unique_ptr<FunctionAST> ParseTopLevelExpr() {
   }
   return nullptr;
 }
+
+//===----------------------------------------------------------------------===//
+// Top-Level parsing
+// 下面这几个函数的处理逻辑都是：如果碰到关键字就尝试处理。如果处理失败返回一个空的AST结点指针，那就直接跳过当前处理的有问题的token
+//===----------------------------------------------------------------------===//
+
+void HandleDefinition() {
+  if (ParseDefinition()) {
+    fprintf(stderr, "Parsed a function definition.\n");
+  } else {
+    // Skip token for error recovery.
+    getNextToken();
+  }
+}
+
+void HandleExtern() {
+  if (ParseExtern()) {
+    fprintf(stderr, "Parsed an extern\n");
+  } else {
+    // Skip token for error recovery.
+    getNextToken();
+  }
+}
+
+void HandleTopLevelExpression() {
+  // Evaluate a top-level expression into an anonymous function.
+  if (ParseTopLevelExpr()) {
+    fprintf(stderr, "Parsed a top-level expr\n");
+  } else {
+    // Skip token for error recovery.
+    getNextToken();
+  }
+}
+
+/// top ::= definition | external | expression | ';'
+void MainLoop() {
+  while (true) {
+    fprintf(stderr, "ready> ");
+    switch (CurTok) {
+    case TOK_EOF:
+      return;
+    case ';': // ignore top-level semicolons.
+      getNextToken();
+      break;
+    case TOK_DEF:
+      HandleDefinition();
+      break;
+    case TOK_EXTERN:
+      HandleExtern();
+      break;
+    default:
+      HandleTopLevelExpression();
+      break;
+    }
+  }
+}
 } // namespace
+
+//===----------------------------------------------------------------------===//
+// Main driver code.
+//===----------------------------------------------------------------------===//
+
+int main() {
+  // Install standard binary operators.
+  // 1 is lowest precedence.
+  BinopPrecedence['<'] = 10;
+  BinopPrecedence['+'] = 20;
+  BinopPrecedence['-'] = 20;
+  BinopPrecedence['*'] = 40; // highest.
+
+  // Prime the first token.
+  fprintf(stderr, "ready> ");
+  // 预读取，优先调用一次getNextToken，确保CurTOk这个变量在进入循环之前就有第一个有效的token可以解析
+  // 没有这一步的话CurTok没有值，将影响解析函数处理第一个token的逻辑（例如ParsePrimary函数里面的switch(CurTok)这个分支判断就会出问题，因为CurTok没有值）。因此这一步是必要的。
+  getNextToken();
+
+  // Run the main "interpreter loop" now.
+  MainLoop();
+
+  return 0;
+}
